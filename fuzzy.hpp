@@ -9,6 +9,11 @@
 #include <boost/range/metafunctions.hpp>
 #include <boost/range/as_literal.hpp>
 #include <boost/range/join.hpp>
+#include <boost/fusion/container.hpp>
+#include <boost/fusion/sequence.hpp>
+#include <boost/fusion/algorithm.hpp>
+
+namespace fusion = boost::fusion;
 
 template<typename To, typename From, typename... Rest>
 constexpr bool is_converible_variadic_impl() {
@@ -40,27 +45,17 @@ class Fuzzy
 public:
     using value_type = T;
 
-    Fuzzy(): _gamma(_defaultGamma), _grades(nullptr), _size(0)
+    Fuzzy(): _gamma(_defaultGamma), _grades{0}
     {
         setDomain(value_type(0), value_type(1));
     }
-    template<typename ...Args, typename = std::enable_if_t<(std::is_same_v<T, Args> && ...)>>
-    Fuzzy(Args&& ... args) :
-        _gamma(_defaultGamma), _grades(nullptr), _size(sizeof... (args))
+    Fuzzy(const value_type& xMin, const value_type& xMax) :
+        _gamma(_defaultGamma), _grades{0}
     {
-        value_type xMin{};
-        value_type xMax{};
-        for(auto& x : join(args...)) {
-            if(x > xMin) {
-                xMin = x;
-            }
-            if(x < xMax) xMax = x;
-        }
-        resize(_size);
         setDomain(xMin, xMax);
     }
     Fuzzy(const Fuzzy& arg):
-        _gamma(_defaultGamma), _grades(nullptr), _size(arg._size)
+        _gamma(_defaultGamma), _grades{0}
     {
         *this = arg;
     }
@@ -72,12 +67,13 @@ public:
         else _resolution = value_type(1);
     }
     void fillGrade(const value_type& fill_val);
+///===============================================
 
     template<typename ...Args, typename = std::enable_if_t<(std::is_convertible_v<value_type, Args> && ...)>>
-    void fillAll(Args&&... val) {
-        for(int i = 0; i <sizeof... (Args); i++)
-            std::invoke(_grades[i], std::forward<Args>(val)...);
+    auto fillAll(Args&&... val) {
+        return fusion::push_back(_grades, {std::forward<Args>(val)...});
     }
+///====================================
     void normalize();
 
     void small();
@@ -114,30 +110,46 @@ public:
 
     int isSubSet(const Fuzzy& arg) const;
 
-    value_type operator [] (const int i);
+    template<size_t I>
+    value_type at () {
+        return fusion::at<mpl::int_<I>>(_grades);
+    }
     value_type operator () (const value_type& x) const;
     value_type operator () (const int i, const int j) const;
     value_type operator () (const int i, const int j, const int k) const;
 
     Fuzzy& operator = (const Fuzzy& arg) {
-        if(_size != arg._size) resize(arg._size);
-        for(int i=0;i<_size;i++)
-            _grades[i] = arg._grades[i];
-        setDomain(arg._xMin,arg._xMax);
+        BOOST_STATIC_ASSERT(fusion::size(_grades) == fusion::size(arg._grades));
+        _grades.assign_sequence(arg._grades);
+        setDomain(arg._xMin, arg._xMax);
         return *this;
     }
 
     Fuzzy operator ! () const;
     Fuzzy operator && (const Fuzzy& arg) const;
     Fuzzy operator || (const Fuzzy& arg) const;
+
+    template<class Closure>
+    struct Fuzzy_plus {
+        Fuzzy_plus(const Closure& A, const Closure& B, Closure& result) : A(A), B(B), result_(result) {}
+        template<size_t I>
+        void apply() const {
+            value_type rslt =  fusion::at<mpl::int_<I>>(A._grades) + fusion::at<mpl::int_<I>>(B._grades);
+            if(rslt < 1.0) fusion::push_back(result_._grades, rslt);
+            else fusion::push_back(result_._grades, value_type(1));
+        }
+    private:
+        const Closure& A;
+        const Closure& B;
+    public:
+        Closure& result_;
+    };
+    template<size_t N>
     Fuzzy operator + (const Fuzzy& arg) const {
         Fuzzy result(arg);
-        for(int i=0;i<_size;i++) {
-            value_type rslt = _grades[i] + arg._grades[i];
-            if(rslt < 1.0) result._grades[i] = rslt;
-            else result._grades[i] = value_type(1);
-        }
-        return result;
+        Fuzzy_plus<Fuzzy> closure(*this, arg, result);
+        meta_loop<N>(closure);
+        return closure.result_;
     }
     Fuzzy operator - (const Fuzzy& arg) const;
     Fuzzy operator % (const Fuzzy& arg) const;
@@ -173,15 +185,16 @@ public:
     static const value_type slightly = 0.25;
     static const value_type vaguely = 0.03;
 
-    value_type* _grades;
+//    value_type* _grades;
+    fusion::vector<T> _grades;
     int _size;
     value_type _gamma;
 
     value_type _xMin, _xMax, _resolution, _domainSize;
     void resize(int newSize) {
-        delete [] _grades;
-        _grades = new value_type[newSize];
-        _size = newSize;
+//        delete [] _grades;
+//        _grades = new value_type[newSize];
+//        _size = newSize;
     }
 private:
     static const value_type _defaultGamma = 0.5;

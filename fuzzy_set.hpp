@@ -24,8 +24,8 @@ template<typename I> struct placeholder : I {};
 
 
 
-template<typename Expr>
-class Fuzzy_set;
+template<typename ...Args>
+struct Fuzzy_set;
 
 
 
@@ -100,72 +100,78 @@ struct Fuzzy_setExpr;
 
 struct Fuzzy_set_Domain : proto::domain<proto::generator<Fuzzy_setExpr>, Fuzzy_grammar> {};
 
-struct Fuzzy_set_context
-  : proto::callable_context< Fuzzy_set_context const >
-{
-    typedef Fuzzy<double> result_type;
 
-    using vector_type = fusion::vector<result_type, result_type>;
-    vector_type args;
+template<size_t I>
+struct Fuzzy_set_context {
 
-    explicit Fuzzy_set_context(result_type d1 = result_type(), result_type d2 = result_type())
+    Fuzzy_set_context()  {}
+
+
+    template<typename Expr, typename Tag = typename Expr::proto_tag>
+    struct eval : proto::default_eval<Expr, Fuzzy_set_context>  {};
+
+
+    template<typename Expr>
+    struct eval<Expr, proto::tag::terminal>
     {
-        fusion::push_back(args, d1);
-        fusion::push_back(args, d2);
-    }
-
-
-    template<size_t I>
-    result_type operator()(proto::tag::terminal, const result_type&) const
-    {
-        return fusion::at<mpl::int_<I>>(args);
-    }
-    template<typename E1, typename E2>
-    result_type operator()(proto::tag::plus, const E1& e1, const E2& e2) const {
-        return proto::eval(e1, *this) + proto::eval(e2, *this);
-    }
-    template<typename E1, typename E2>
-    result_type operator()(proto::tag::minus, const E1& e1, const E2& e2) const {
-        return proto::eval(e1, *this) - proto::eval(e2, *this);
-    }
-    template<typename E1, typename E2>
-    result_type operator()(proto::tag::multiplies, const E1& e1, const E2& e2) const {
-        return proto::eval(e1, *this) * proto::eval(e2, *this);
-    }
+        typedef typename fusion::result_of::at_c<typename proto::result_of::value<Expr>::type, I>::type result_type;
+        result_type operator ()( Expr const & expr, Fuzzy_set_context & ) const
+        {
+//            std::remove_const_t<decltype (proto::value(expr))> tmp;
+            return fusion::at_c<mpl::int_<I>>(proto::value(expr)) ;
+        }
+    };
 };
 
-template<typename T>
-struct IsVector : mpl::false_ {};
-template<>
-struct IsVector<Fuzzy<double>> : mpl::true_ {};
 
 template<typename Expr>
 struct Fuzzy_setExpr : proto::extends<Expr, Fuzzy_setExpr<Expr>, Fuzzy_set_Domain> {
 
-    using type = typename proto::result_of::eval< Expr, Fuzzy_set_context>::type;
-//    using type = Fuzzy<double>;
+    explicit Fuzzy_setExpr( Expr const & expr = Expr() )
+          : Fuzzy_setExpr::proto_extends( expr ) {}
 
-    Fuzzy_setExpr(const Expr& e = Expr())
-        : proto::extends<Expr, Fuzzy_setExpr<Expr>, Fuzzy_set_Domain>(e) {
-        auto const & ti = BOOST_CORE_TYPEID(type);
-        std::cout << boost::core::demangled_name( ti ) << std::endl;
-    }
-    type operator ()(const type& a) const {
-        Fuzzy_set_context const ctx(a);
+    template< size_t I>
+//    typename proto::result_of::eval< Expr, Fuzzy_set_context<I> >::type
+    typename fusion::result_of::at_c<typename proto::result_of::eval< Expr, Fuzzy_set_context<I> >::type, I>::type
+    at( ) const
+    {
+        Fuzzy_set_context<I> const ctx;
         return proto::eval(*this, ctx);
     }
-
-    type operator ()(const type& a, const type& b) const {
-        Fuzzy_set_context const ctx(a, b);
-        return proto::eval(*this, ctx);
-    }
+//    typename fusion::result_of::as_vector<
+//                typename proto::result_of::eval< Expr, FuzzyGroup(Expr) >::type>::type
+//    get() const {
+//        return fusion::as_vector(FuzzyGroup()(*this));
+//    }
 };
 
-namespace _FUZZY {
-    BOOST_PROTO_DEFINE_OPERATORS(IsVector, Fuzzy_set_Domain)
-}
+template< typename ...Args >
+struct Fuzzy_set
+  : Fuzzy_setExpr< typename proto::terminal< fusion::vector<Args...> >::type >
+{
+    typedef typename proto::terminal< fusion::vector<Args...> >::type expr_type;
 
+    Fuzzy_set(Args&& ... args)
+        : Fuzzy_setExpr<expr_type>( expr_type::make( fusion::vector<Args...>{std::forward<Args>(args)...} ) )
+    {}
 
+//    template< typename Expr >
+//    Fuzzy_set &operator += (Expr const & expr)
+//    {
+//        size_t size = fusion::size(proto::value(*this));
+//        for(std::size_t i = 0; i < size; ++i)
+//        {
+//            proto::value(*this)[i] += expr[i];
+//        }
+//        return *this;
+//    }
+    template< typename Expr >
+    Fuzzy_set &operator = (Expr const & expr)
+    {
+        proto::value(*this).assign_sequence(proto::value(expr));
+        return *this;
+    }
+};
 
 
 
